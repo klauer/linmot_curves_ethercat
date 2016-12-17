@@ -18,11 +18,9 @@ for cid, curve in sorted(curves.items()):
     plt.plot(curve['data'], 'o')
 
     print('-', name)
-    info = curve['info']
-    print(len(info), info)
-    info_s = parse_curve_info(info)
-    for field_name, type_, value in info_s.get_info():
-        print('\t{} ({}): {}'.format(field_name, type_, value))
+    info = parse_curve_info(curve['info'])
+    for field_name, type_, value in info.get_info():
+        print('\t{} = {!r}'.format(field_name, value))
 
 plt.show()
 
