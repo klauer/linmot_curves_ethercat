@@ -2,12 +2,68 @@ from __future__ import print_function
 import sys
 import epics
 import time
+import struct
+import ctypes
 from threading import Lock
 from collections import namedtuple
 
 
 Transition = namedtuple('Transition', 'initial final status')
 State = namedtuple('State', 'control_word data')
+
+
+class CurveInfoStruct(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [('data_offset', ctypes.c_uint16),
+                ('object_type', ctypes.c_uint16),
+                ('num_setpoints', ctypes.c_uint16),
+                ('data_type_size', ctypes.c_uint16),
+                ('_name', ctypes.c_byte * 22),
+                ('curve_id', ctypes.c_uint16),
+                ('x_length', ctypes.c_uint32),
+                ('x_dim_uuid', ctypes.c_uint16),
+                ('y_dim_uuid', ctypes.c_uint16),
+                ('wizard_type', ctypes.c_uint16),
+                ('_wizard_params', ctypes.c_uint32 * 7),
+                ]
+
+    @property
+    def name(self):
+        return ctypes.string_at(self._name).decode('latin-1')
+
+    @property
+    def wizard_params(self):
+        return list(self._wizard_params)
+
+    def get_info(self):
+        for field_name, type_ in self._fields_:
+            field_name = field_name.lstrip('_')
+            yield (field_name, type_, getattr(self, field_name))
+
+
+assert ctypes.sizeof(CurveInfoStruct) == 70
+
+
+def unpack_curve_to_bytes(info):
+    if len(info) == 18:
+        return b''.join(struct.pack('<i', d) for d in info)
+    elif len(info) == 70:
+        return info
+    else:
+        raise ValueError('Invalid curve data length')
+
+
+def parse_curve_info(info):
+    info = unpack_curve_to_bytes(info)
+    st = CurveInfoStruct()
+    ctypes.memmove(ctypes.addressof(st), info, len(info))
+    return st
+
+
+class Curve(object):
+    def __init__(self, info, setpoints):
+        self.info = parse_curve_info(info)
+        self.setpoints = setpoints
 
 
 class CurveAccess(object):
