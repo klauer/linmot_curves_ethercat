@@ -1,7 +1,6 @@
 from __future__ import print_function
 import sys
 import epics
-import time
 import struct
 import ctypes
 import logging
@@ -16,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class CurveInfoStruct(ctypes.Structure):
+    _size_ = 70  # not part of ctypes.Structure
     _pack_ = 1
     _fields_ = [('data_offset', ctypes.c_uint16),
                 ('object_type', ctypes.c_uint16),
@@ -38,19 +38,25 @@ class CurveInfoStruct(ctypes.Structure):
     def wizard_params(self):
         return list(self._wizard_params)
 
+    @property
+    def packed_block_size(self):
+        # original calculation:
+        # [(info[1] * 4) << 16] | [(info[0] << 16) >> 16]
+        return ((self.num_setpoints << 18) | self._size_) & 0xffffffff
+
     def get_info(self):
         for field_name, type_ in self._fields_:
             field_name = field_name.lstrip('_')
             yield (field_name, type_, getattr(self, field_name))
 
 
-assert ctypes.sizeof(CurveInfoStruct) == 70
+assert ctypes.sizeof(CurveInfoStruct) == CurveInfoStruct._size_
 
 
 def unpack_curve_to_bytes(info):
     if len(info) == 18:
         return b''.join(struct.pack('<i', d) for d in info)
-    elif len(info) == 70:
+    elif len(info) == CurveInfoStruct._size_:
         return info
     else:
         raise ValueError('Invalid curve data length')
@@ -201,7 +207,7 @@ class CurveAccess(object):
 def test(prefix):
     acc = CurveAccess(prefix)
 
-    curves = (1, ) # 2, 3, 5)
+    curves = (1, 2, 3, 5)
     data = {}
     for cid in curves:
         data[cid] = acc.read_curve(cid)
