@@ -4,12 +4,15 @@ import epics
 import time
 import struct
 import ctypes
+import logging
 from threading import Lock
 from collections import namedtuple
 
 
 Transition = namedtuple('Transition', 'initial final status')
 State = namedtuple('State', 'control_word data')
+
+logger = logging.getLogger(__name__)
 
 
 class CurveInfoStruct(ctypes.Structure):
@@ -134,7 +137,7 @@ class CurveAccess(object):
         for tr in transition_list:
             transitions[tr.initial][tr.status] = tr.final
 
-        print('State', state, cur_state_info)
+        logger.debug('State %s %s', state, cur_state_info)
         while cur_state_info.data not in ('error', 'success'):
             status_in = self.status_in
             try:
@@ -142,28 +145,28 @@ class CurveAccess(object):
             except KeyError:
                 continue
             else:
-                print('Received {}'.format(status_in))
-                print('Transition from state {} to state {}'
-                      ''.format(state, new_state))
+                logger.debug('Received %s', status_in)
+                logger.debug('Transition from state %s to state %s',
+                             state, new_state)
 
                 if cur_state_info.data is not None:
                     if cur_state_info.data not in data:
                         data[cur_state_info.data] = []
 
                     data[cur_state_info.data].append(self.value_in)
-                    print('Received word for {!r}: {}'
-                          ''.format(cur_state_info.data, self.value_in))
+                    logger.debug('Received word for %r: %s',
+                                 cur_state_info.data, self.value_in)
 
                 state = new_state
                 cur_state_info = state_info[state]
 
-                print('State', state, cur_state_info)
+                logger.debug('State %s %s', state, cur_state_info)
                 self.control_word = cur_state_info.control_word
 
-        print('Final state:', state)
-        print('Data:')
+        logger.debug('Final state %s %s', state, cur_state_info)
+        logger.debug('Data:')
         for key, d in sorted(data.items()):
-            print('\t{}: {}'.format(key, d))
+            logger.debug('\t%s = %r', key, d)
         return (state, data)
 
     def read_curve(self, curve_index):
@@ -204,7 +207,11 @@ def test(prefix):
         data[curve] = acc.read_curve(curve)
 
     for curve in curves:
-        print(curve, data[curve])
+        info = parse_curve_info(curve['info'])
+        print('Curve {!r}'.format(info.name))
+        for field_name, type_, value in info.get_info():
+            print('\t{} = {!r}'.format(field_name, value))
+        print('\t{!r}'.format(curve['data']))
 
 
 if __name__ == '__main__':
@@ -213,5 +220,8 @@ if __name__ == '__main__':
         prefix = sys.argv[1]
     except IndexError:
         prefix = 'WIRE:B34:97:CONFIGMODULE:'
+
+    logging.basicConfig()
+    logger.setLevel(logging.DEBUG)
 
     test(prefix=prefix)
