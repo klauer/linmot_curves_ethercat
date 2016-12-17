@@ -201,17 +201,20 @@ class CurveAccess(object):
 def test(prefix):
     acc = CurveAccess(prefix)
 
-    curves = (1, 2, 3, 5)
+    curves = (1, ) # 2, 3, 5)
     data = {}
-    for curve in curves:
-        data[curve] = acc.read_curve(curve)
+    for cid in curves:
+        data[cid] = acc.read_curve(cid)
 
-    for curve in curves:
+    for cid in curves:
+        curve = data[cid]
         info = parse_curve_info(curve['info'])
         print('Curve {!r}'.format(info.name))
         for field_name, type_, value in info.get_info():
             print('\t{} = {!r}'.format(field_name, value))
         print('\t{!r}'.format(curve['data']))
+
+    return data
 
 
 if __name__ == '__main__':
@@ -224,4 +227,6 @@ if __name__ == '__main__':
     logging.basicConfig()
     logger.setLevel(logging.DEBUG)
 
-    test(prefix=prefix)
+    # use ipython -i linmot.py
+    # to get access to these
+    data = test(prefix=prefix)
