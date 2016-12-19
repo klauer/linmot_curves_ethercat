@@ -150,6 +150,25 @@ class Curve(object):
         self.setpoints = setpoints
 
 
+class CurveStates:  # py3k enum, really
+    ST_INIT = 20
+
+    # Info block transfer states
+    ST_INFO1 = 21
+    ST_INFO2 = 22
+
+    # Data block states
+    ST_DATA1 = 23
+    ST_DATA2 = 24
+
+    # Final states
+    ST_ERROR = 90
+    ST_DONE = 100
+
+    final_states = (ST_DONE, )
+    error_states = (ST_ERROR, )
+
+
 class CurveAccess(object):
     def __init__(self, prefix='WIRE:B34:97:CONFIGMODULE:'):
         self._index_in = epics.PV(prefix + 'INDEXIN', auto_monitor=False)
@@ -166,6 +185,20 @@ class CurveAccess(object):
                      ]
 
         self._lock = Lock()
+        self.transitions = [
+            Transition(CurveStates.ST_INIT,  CurveStates.ST_INFO1, 0x0001),
+            Transition(CurveStates.ST_INFO1, CurveStates.ST_INFO2, 0x0402),
+            Transition(CurveStates.ST_INFO1, CurveStates.ST_DATA1, 0x0002),
+            Transition(CurveStates.ST_INFO2, CurveStates.ST_INFO1, 0x0403),
+            Transition(CurveStates.ST_INFO2, CurveStates.ST_DATA1, 0x0003),
+            Transition(CurveStates.ST_DATA1, CurveStates.ST_DATA2, 0x0404),
+            Transition(CurveStates.ST_DATA1, CurveStates.ST_DONE,  0x0004),
+            Transition(CurveStates.ST_DATA2, CurveStates.ST_DATA1, 0x0405),
+            Transition(CurveStates.ST_DATA2, CurveStates.ST_DONE,  0x0005),
+
+            # Error - invalid curve id
+            Transition(CurveStates.ST_INIT,  CurveStates.ST_ERROR, 0xD401),
+            ]
 
         for pv in self._pvs:
             pv.wait_for_connection()
@@ -294,37 +327,24 @@ class CurveAccess(object):
         States are also pretty much identical between modify/add/get, only
         differing in the output values (TODO simplify)
         '''
-        transitions = [Transition(40,  41, 0x0001),
-                       Transition(40,  90, 0xD401),  # invalid curve id
-                       Transition(41,  42, 0x0402),
-                       Transition(41,  43, 0x0002),
-                       Transition(42,  41, 0x0403),
-                       Transition(42,  43, 0x0003),
-                       Transition(43,  44, 0x0404),
-                       Transition(43, 100, 0x0004),
-                       Transition(44,  43, 0x0405),
-                       Transition(44, 100, 0x0005),
-                       ]
         state_info = {
-            40:  State(0x6001, None),
-            41:  State(0x6102, 'info'),
-            42:  State(0x6103, 'info'),
-            43:  State(0x6204, 'data'),
-            44:  State(0x6205, 'data'),
-            90:  State(0x0000, 'error'),
-            100: State(0x0000, 'success'),
+            CurveStates.ST_INIT:  State(0x6001, None),
+            CurveStates.ST_INFO1: State(0x6102, 'info'),
+            CurveStates.ST_INFO2: State(0x6103, 'info'),
+            CurveStates.ST_DATA1: State(0x6204, 'data'),
+            CurveStates.ST_DATA2: State(0x6205, 'data'),
+            CurveStates.ST_ERROR: State(0x0000, 'error'),
+            CurveStates.ST_DONE:  State(0x0000, 'success'),
         }
 
-        self._start_command()
-
-        self.index_out = curve_index
-        self.control_word = 0x6001
-        final_state, data = self._run(40, transitions, state_info)
-        if final_state != 100:
+        self._start_sequence(0x6001, curve_index)
+        final_state, data = self._run(CurveStates.ST_INIT, self.transitions,
+                                      state_info)
+        if final_state not in CurveStates.final_states:
             raise RuntimeError('invalid final state?')
         return data
 
-    def _start_command(self):
+    def _start_sequence(self, control_word, index_out, value_out=0):
         self.index_out = 0
         self.value_out = 0
         self.control_word = 0xF
@@ -333,6 +353,10 @@ class CurveAccess(object):
         while self.status_in != 0xF:
             time.sleep(0.05)
             logger.debug('Initializing (status=%x)', self.status_in)
+
+        self.index_out = index_out
+        self.value_out = value_out
+        self.control_word = control_word
 
     def write_curve(self, curve_index, name, x_length, setpoints,
                     x_type='time', y_type='position', wizard_type=None,
@@ -401,51 +425,25 @@ class CurveAccess(object):
 
         assert curve_struct.num_setpoints == len(setpoints)
 
-        self._start_command()
-
         if modify:
-            initial_state = 30
-            transitions = [Transition(30,  31, 0x0001),
-                           Transition(30,  90, 0xD401),  # invalid curve id
-                           Transition(31,  32, 0x0402),
-                           Transition(31,  33, 0x0002),
-                           Transition(32,  31, 0x0403),
-                           Transition(32,  33, 0x0003),
-                           Transition(33,  34, 0x0404),
-                           Transition(33, 100, 0x0004),
-                           Transition(34,  33, 0x0405),
-                           Transition(34, 100, 0x0005),
-                           ]
             state_info = {
-                30:  State(0x5301, None),
-                31:  State(0x5402, 'info'),
-                32:  State(0x5403, 'info'),
-                33:  State(0x5504, 'data'),
-                34:  State(0x5505, 'data'),
-                90:  State(0x0000, 'error'),
-                100: State(0x0000, 'success'),
+                CurveStates.ST_INIT:  State(0x5301, None),
+                CurveStates.ST_INFO1: State(0x5402, 'info'),
+                CurveStates.ST_INFO2: State(0x5403, 'info'),
+                CurveStates.ST_DATA1: State(0x5504, 'data'),
+                CurveStates.ST_DATA2: State(0x5505, 'data'),
+                CurveStates.ST_ERROR: State(0x0000, 'error'),
+                CurveStates.ST_DONE:  State(0x0000, 'success'),
             }
         else:
-            initial_state = 20
-            transitions = [Transition(20,  21, 0x0001),
-                           Transition(20,  90, 0xD401),  # invalid curve id
-                           Transition(21,  22, 0x0402),
-                           Transition(21,  23, 0x0002),
-                           Transition(22,  21, 0x0403),
-                           Transition(22,  23, 0x0003),
-                           Transition(23,  24, 0x0404),
-                           Transition(23, 100, 0x0004),
-                           Transition(24,  23, 0x0405),
-                           Transition(24, 100, 0x0005),
-                           ]
             state_info = {
-                20:  State(0x5001, None),
-                21:  State(0x5102, 'info'),
-                22:  State(0x5103, 'info'),
-                23:  State(0x5204, 'data'),
-                24:  State(0x5205, 'data'),
-                90:  State(0x0000, 'error'),
-                100: State(0x0000, 'success'),
+                CurveStates.ST_INIT:  State(0x5001, None),
+                CurveStates.ST_INFO1: State(0x5102, 'info'),
+                CurveStates.ST_INFO2: State(0x5103, 'info'),
+                CurveStates.ST_DATA1: State(0x5204, 'data'),
+                CurveStates.ST_DATA2: State(0x5205, 'data'),
+                CurveStates.ST_ERROR: State(0x0000, 'error'),
+                CurveStates.ST_DONE:  State(0x0000, 'success'),
             }
 
         scale = CurveInfoStruct.y_scale[y_type]
@@ -456,14 +454,14 @@ class CurveAccess(object):
                       'error': deque([0]),
                       }
 
-        self.index_out = curve_index
-        self.value_out = curve_struct.packed_block_size
         if modify:
             logger.debug('Modifying curve %d', curve_struct.curve_id)
-            self.control_word = 0x5301
+            control_word = 0x5301
         else:
             logger.debug('Writing new curve %d', curve_struct.curve_id)
-            self.control_word = 0x5001
+            control_word = 0x5001
+        self._start_sequence(control_word, curve_index,
+                             curve_struct.packed_block_size)
 
         for field_name, type_, value in curve_struct.get_info():
             logger.debug('\t%s = %r', field_name, value)
@@ -471,9 +469,9 @@ class CurveAccess(object):
         logger.debug('Index %d, block size=%x, control word=%x',
                      self.index_out, self.value_out, self.control_word)
 
-        final_state, data = self._run(initial_state, transitions, state_info,
-                                      write_data=write_data)
-        if final_state != 100:
+        final_state, data = self._run(CurveStates.ST_INIT, self.transitions,
+                                      state_info, write_data=write_data)
+        if final_state not in CurveStates.final_states:
             raise RuntimeError('invalid final state?')
         return data
 
