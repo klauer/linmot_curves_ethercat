@@ -87,7 +87,7 @@ class CurveInfoStruct(ctypes.Structure):
     def create(curve_index, name, x_length, num_setpoints, x_type='time',
                y_type='position', wizard_type=None, wizard_params=None):
         curve_struct = CurveInfoStruct()
-        curve_struct.data_offset = 0x70
+        curve_struct.data_offset = curve_struct._size_
 
         type_uuids = CurveInfoStruct.type_uuids
         assert x_type in type_uuids
