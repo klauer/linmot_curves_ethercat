@@ -290,6 +290,9 @@ class CurveAccess(object):
 
         TODO: Once this is implemented in the sequencer, there should be better
         error-handling between states, and better error reporting to the user
+
+        States are also pretty much identical between modify/add/get, only
+        differing in the output values (TODO simplify)
         '''
         transitions = [Transition(40,  41, 0x0001),
                        Transition(40,  90, 0xD401),  # invalid curve id
@@ -333,7 +336,7 @@ class CurveAccess(object):
 
     def write_curve(self, curve_index, name, x_length, setpoints,
                     x_type='time', y_type='position', wizard_type=None,
-                    wizard_params=None, curve_struct=None):
+                    wizard_params=None, curve_struct=None, modify=False):
         '''Write a curve to the drive's RAM
 
         Parameters
@@ -386,9 +389,6 @@ class CurveAccess(object):
         [3] write curve data blocks (similar to [2])
             command words: 0x5204, 0x5205
             Upper status word 0x04 means to toggle between the states, 0 done
-
-        TODO: Once this is implemented in the sequencer, there should be better
-        error-handling between states, and better error reporting to the user
         '''
 
         if curve_struct is None:
@@ -403,26 +403,50 @@ class CurveAccess(object):
 
         self._start_command()
 
-        transitions = [Transition(20,  21, 0x0001),
-                       Transition(20,  90, 0xD401),  # invalid curve id
-                       Transition(21,  22, 0x0402),
-                       Transition(21,  23, 0x0002),
-                       Transition(22,  21, 0x0403),
-                       Transition(22,  23, 0x0003),
-                       Transition(23,  24, 0x0404),
-                       Transition(23, 100, 0x0004),
-                       Transition(24,  23, 0x0405),
-                       Transition(24, 100, 0x0005),
-                       ]
-        state_info = {
-            20:  State(0x5001, None),
-            21:  State(0x5102, 'info'),
-            22:  State(0x5103, 'info'),
-            23:  State(0x5204, 'data'),
-            24:  State(0x5205, 'data'),
-            90:  State(0x0000, 'error'),
-            100: State(0x0000, 'success'),
-        }
+        if modify:
+            initial_state = 30
+            transitions = [Transition(30,  31, 0x0001),
+                           Transition(30,  90, 0xD401),  # invalid curve id
+                           Transition(31,  32, 0x0402),
+                           Transition(31,  33, 0x0002),
+                           Transition(32,  31, 0x0403),
+                           Transition(32,  33, 0x0003),
+                           Transition(33,  34, 0x0404),
+                           Transition(33, 100, 0x0004),
+                           Transition(34,  33, 0x0405),
+                           Transition(34, 100, 0x0005),
+                           ]
+            state_info = {
+                30:  State(0x5301, None),
+                31:  State(0x5402, 'info'),
+                32:  State(0x5403, 'info'),
+                33:  State(0x5504, 'data'),
+                34:  State(0x5505, 'data'),
+                90:  State(0x0000, 'error'),
+                100: State(0x0000, 'success'),
+            }
+        else:
+            initial_state = 20
+            transitions = [Transition(20,  21, 0x0001),
+                           Transition(20,  90, 0xD401),  # invalid curve id
+                           Transition(21,  22, 0x0402),
+                           Transition(21,  23, 0x0002),
+                           Transition(22,  21, 0x0403),
+                           Transition(22,  23, 0x0003),
+                           Transition(23,  24, 0x0404),
+                           Transition(23, 100, 0x0004),
+                           Transition(24,  23, 0x0405),
+                           Transition(24, 100, 0x0005),
+                           ]
+            state_info = {
+                20:  State(0x5001, None),
+                21:  State(0x5102, 'info'),
+                22:  State(0x5103, 'info'),
+                23:  State(0x5204, 'data'),
+                24:  State(0x5205, 'data'),
+                90:  State(0x0000, 'error'),
+                100: State(0x0000, 'success'),
+            }
 
         scale = CurveInfoStruct.y_scale[y_type]
         write_data = {'info': deque(curve_struct.to_uint32s()),
@@ -432,30 +456,33 @@ class CurveAccess(object):
                       'error': deque([0]),
                       }
 
-        print(write_data)
-        logger.debug('Writing new curve %d', curve_struct.curve_id)
-        for field_name, type_, value in curve_struct.get_info():
-            logger.debug('\t%s = %r', field_name, value)
-
         self.index_out = curve_index
         self.value_out = curve_struct.packed_block_size
-        self.control_word = 0x5001
+        if modify:
+            logger.debug('Modifying curve %d', curve_struct.curve_id)
+            self.control_word = 0x5301
+        else:
+            logger.debug('Writing new curve %d', curve_struct.curve_id)
+            self.control_word = 0x5001
+
+        for field_name, type_, value in curve_struct.get_info():
+            logger.debug('\t%s = %r', field_name, value)
 
         logger.debug('Index %d, block size=%x, control word=%x',
                      self.index_out, self.value_out, self.control_word)
 
-        final_state, data = self._run(20, transitions, state_info,
+        final_state, data = self._run(initial_state, transitions, state_info,
                                       write_data=write_data)
         if final_state != 100:
             raise RuntimeError('invalid final state?')
         return data
 
 
-def _test_copy(acc, new_curve_id=8):
+def _test_copy(acc, new_curve_id=8, modify=False):
     from results import curve_1
     info = parse_curve_info(curve_1['info'])
 
-    setpoints = [float(setpoint) / info.y_scale['position']
+    setpoints = [float(setpoint * 2) / info.y_scale['position']
                  for setpoint in curve_1['data']]
 
     acc.write_curve(new_curve_id,
@@ -463,7 +490,8 @@ def _test_copy(acc, new_curve_id=8):
                     info.x_length * 1e-5, setpoints,
                     x_type=info.x_type, y_type=info.y_type,
                     wizard_type=info.wizard_type,
-                    wizard_params=info.wizard_params)
+                    wizard_params=info.wizard_params,
+                    modify=modify)
 
 
 def _test_read(acc, curves):
@@ -486,7 +514,7 @@ def test(prefix):
     acc = CurveAccess(prefix)
 
     cid = 10
-    _test_copy(acc, cid)
+    _test_copy(acc, cid, modify=True)
     return _test_read(acc, (cid, ))
 
 
