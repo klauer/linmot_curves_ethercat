@@ -176,15 +176,53 @@ class CurveAccess(object):
         return (state, data)
 
     def read_curve(self, curve_index):
-        transitions = [Transition(40,  41, 0x001),
-                       Transition(41,  42, 0x402),
-                       Transition(41,  43, 0x002),
-                       Transition(42,  41, 0x403),
-                       Transition(42,  43, 0x003),
-                       Transition(43,  44, 0x404),
-                       Transition(43, 100, 0x004),
-                       Transition(44,  43, 0x405),
-                       Transition(44, 100, 0x005),
+        '''Read a curve from the drive's RAM
+
+        Parameters
+        ----------
+        curve_index : int
+
+        Raises
+        ------
+        RuntimeError
+            Invalid index specified (or other error reading)
+
+        Returns
+        -------
+        curve_info : dict
+            Curve data dictionary with keys ('info', 'data')
+
+        Note
+        ----
+        This is a direct translation of the PLC code, but it can be done more
+        intelligently:
+
+        There are 3 main stages:
+        [1] start reading curve id
+            command word: 0x6001
+
+        [2] read curve info blocks
+            command words: 0x6102, 0x6103
+            Upper status word 0x04 means to toggle between the states, 0 means
+            continue to [3]
+
+        [3] read curve data blocks (similar to [2])
+            command words: 0x6204, 0x6205
+            Upper status word 0x04 means to toggle between the states, 0 done
+
+        TODO: Once this is implemented in the sequencer, there should be better
+        error-handling between states, and better error reporting to the user
+        '''
+        transitions = [Transition(40,  41, 0x0001),
+                       Transition(40,  90, 0xD401),  # invalid curve id
+                       Transition(41,  42, 0x0402),
+                       Transition(41,  43, 0x0002),
+                       Transition(42,  41, 0x0403),
+                       Transition(42,  43, 0x0003),
+                       Transition(43,  44, 0x0404),
+                       Transition(43, 100, 0x0004),
+                       Transition(44,  43, 0x0405),
+                       Transition(44, 100, 0x0005),
                        ]
         state_info = {
             40:  State(0x6001, None),
@@ -207,7 +245,8 @@ class CurveAccess(object):
 def test(prefix):
     acc = CurveAccess(prefix)
 
-    curves = (1, 2, 3, 5)
+    # curves = (1, 2, 3, 5)
+    curves = (6, )
     data = {}
     for cid in curves:
         data[cid] = acc.read_curve(cid)
