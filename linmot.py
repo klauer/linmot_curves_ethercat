@@ -4,6 +4,7 @@ import math
 import struct
 import ctypes
 import logging
+import time
 from threading import Lock
 from collections import (namedtuple, deque)
 
@@ -310,12 +311,24 @@ class CurveAccess(object):
             100: State(0x0000, 'success'),
         }
 
+        self._start_command()
+
         self.index_out = curve_index
         self.control_word = 0x6001
         final_state, data = self._run(40, transitions, state_info)
         if final_state != 100:
             raise RuntimeError('invalid final state?')
         return data
+
+    def _start_command(self):
+        self.index_out = 0
+        self.value_out = 0
+        self.control_word = 0xF
+
+        # timeout, yadda yadda
+        while self.status_in != 0xF:
+            time.sleep(0.05)
+            logger.debug('Initializing (status=%x)', self.status_in)
 
     def write_curve(self, curve_index, name, x_length, setpoints,
                     x_type='time', y_type='position', wizard_type=None,
@@ -387,6 +400,8 @@ class CurveAccess(object):
 
         assert curve_struct.num_setpoints == len(setpoints)
 
+        self._start_command()
+
         transitions = [Transition(20,  21, 0x0001),
                        Transition(20,  90, 0xD401),  # invalid curve id
                        Transition(21,  22, 0x0402),
@@ -412,6 +427,8 @@ class CurveAccess(object):
         write_data = {'info': deque(curve_struct.to_uint32s()),
                       'data': deque(int(float(setpoint) * scale)
                                     for setpoint in setpoints),
+                      'success': deque([0]),
+                      'error': deque([0]),
                       }
 
         print(write_data)
@@ -422,6 +439,10 @@ class CurveAccess(object):
         self.index_out = curve_index
         self.value_out = curve_struct.packed_block_size
         self.control_word = 0x5001
+
+        logger.debug('Index %d, block size=%x, control word=%x',
+                     self.index_out, self.value_out, self.control_word)
+
         final_state, data = self._run(20, transitions, state_info,
                                       write_data=write_data)
         if final_state != 100:
