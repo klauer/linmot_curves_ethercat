@@ -170,6 +170,8 @@ class CurveStates:  # py3k enum, really
 
 
 class LinmotControl(object):
+    CMD_NOOP = 0x0000
+    CMD_PREPARE_CONFIG_MODULE = 0x000F
     CMD_SAVE_TO_FLASH = 0x4001
     CMD_DELETE_ALL_CURVES = 0x4101
     CMD_RESTART_DRIVE = 0x3000
@@ -369,8 +371,8 @@ class CurveAccess(LinmotControl):
         return data
 
     def _start_sequence(self, control_word, index_out, value_out=0):
-        self.write_and_wait(control_word=0xF, index_out=0, value_out=0,
-                            expected_status=0xF)
+        self.write_and_wait(control_word=self.CMD_PREPARE_CONFIG_MODULE,
+                            index_out=0, value_out=0, expected_status=0xF)
 
         self.index_out = index_out
         self.value_out = value_out
@@ -492,6 +494,18 @@ class CurveAccess(LinmotControl):
         if final_state not in CurveStates.final_states:
             raise RuntimeError('invalid final state?')
         return data
+
+    def write_to_flash(self):
+        sequence = [('Preparing config module', self.CMD_PREPARE_CONFIG_MODULE,
+                     self.CMD_PREPARE_CONFIG_MODULE),
+                    ('Stopping MC module', self.CMD_STOP_MC, 0),
+                    ('Saving to flash', self.CMD_SAVE_TO_FLASH, 1),
+                    ('Starting MC module', self.CMD_START_MC, 0),
+                    ]
+        for msg, control, status in sequence:
+            logger.info('%s - (%x -> %x)', msg, control, status)
+            self.write_and_wait(control_word=control, index_out=0, value_out=0,
+                                expected_status=status)
 
 
 def _test_copy(acc, new_curve_id=8, modify=False):
