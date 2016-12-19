@@ -169,8 +169,14 @@ class CurveStates:  # py3k enum, really
     error_states = (ST_ERROR, )
 
 
-class CurveAccess(object):
-    def __init__(self, prefix='WIRE:B34:97:CONFIGMODULE:'):
+class LinmotControl(object):
+    CMD_SAVE_TO_FLASH = 0x4001
+    CMD_DELETE_ALL_CURVES = 0x4101
+    CMD_RESTART_DRIVE = 0x3000
+    CMD_STOP_MC = 0x3500
+    CMD_START_MC = 0x3600
+
+    def __init__(self, prefix):
         self._index_in = epics.PV(prefix + 'INDEXIN', auto_monitor=False)
         self._status_in = epics.PV(prefix + 'STATUSWORD', auto_monitor=False)
         self._value_in = epics.PV(prefix + 'VALUEIN', auto_monitor=False)
@@ -185,20 +191,6 @@ class CurveAccess(object):
                      ]
 
         self._lock = Lock()
-        self.transitions = [
-            Transition(CurveStates.ST_INIT,  CurveStates.ST_INFO1, 0x0001),
-            Transition(CurveStates.ST_INFO1, CurveStates.ST_INFO2, 0x0402),
-            Transition(CurveStates.ST_INFO1, CurveStates.ST_DATA1, 0x0002),
-            Transition(CurveStates.ST_INFO2, CurveStates.ST_INFO1, 0x0403),
-            Transition(CurveStates.ST_INFO2, CurveStates.ST_DATA1, 0x0003),
-            Transition(CurveStates.ST_DATA1, CurveStates.ST_DATA2, 0x0404),
-            Transition(CurveStates.ST_DATA1, CurveStates.ST_DONE,  0x0004),
-            Transition(CurveStates.ST_DATA2, CurveStates.ST_DATA1, 0x0405),
-            Transition(CurveStates.ST_DATA2, CurveStates.ST_DONE,  0x0005),
-
-            # Error - invalid curve id
-            Transition(CurveStates.ST_INIT,  CurveStates.ST_ERROR, 0xD401),
-            ]
 
         for pv in self._pvs:
             pv.wait_for_connection()
@@ -239,6 +231,38 @@ class CurveAccess(object):
     @value_out.setter
     def value_out(self, value):
         self._value_out.put(value)
+
+    def write_and_wait(self, control_word, index_out, value_out,
+                       expected_status):
+        self.index_out = index_out
+        self.value_out = value_out
+        self.control_word = control_word
+
+        # timeout, yadda yadda
+        while self.status_in != expected_status:
+            time.sleep(0.05)
+            logger.debug('Waiting for status=%x (currently=%x)',
+                         expected_status, self.status_in)
+
+
+class CurveAccess(LinmotControl):
+    def __init__(self, prefix):
+        super().__init__(prefix=prefix)
+
+        self.transitions = [
+            Transition(CurveStates.ST_INIT,  CurveStates.ST_INFO1, 0x0001),
+            Transition(CurveStates.ST_INFO1, CurveStates.ST_INFO2, 0x0402),
+            Transition(CurveStates.ST_INFO1, CurveStates.ST_DATA1, 0x0002),
+            Transition(CurveStates.ST_INFO2, CurveStates.ST_INFO1, 0x0403),
+            Transition(CurveStates.ST_INFO2, CurveStates.ST_DATA1, 0x0003),
+            Transition(CurveStates.ST_DATA1, CurveStates.ST_DATA2, 0x0404),
+            Transition(CurveStates.ST_DATA1, CurveStates.ST_DONE,  0x0004),
+            Transition(CurveStates.ST_DATA2, CurveStates.ST_DATA1, 0x0405),
+            Transition(CurveStates.ST_DATA2, CurveStates.ST_DONE,  0x0005),
+
+            # Error - invalid curve id
+            Transition(CurveStates.ST_INIT,  CurveStates.ST_ERROR, 0xD401),
+            ]
 
     def _run(self, initial_state, transition_list, state_info,
              write_data=None):
@@ -345,14 +369,8 @@ class CurveAccess(object):
         return data
 
     def _start_sequence(self, control_word, index_out, value_out=0):
-        self.index_out = 0
-        self.value_out = 0
-        self.control_word = 0xF
-
-        # timeout, yadda yadda
-        while self.status_in != 0xF:
-            time.sleep(0.05)
-            logger.debug('Initializing (status=%x)', self.status_in)
+        self.write_and_wait(control_word=0xF, index_out=0, value_out=0,
+                            expected_status=0xF)
 
         self.index_out = index_out
         self.value_out = value_out
@@ -511,8 +529,8 @@ def _test_read(acc, curves):
 def test(prefix):
     acc = CurveAccess(prefix)
 
-    cid = 10
-    _test_copy(acc, cid, modify=True)
+    cid = 11
+    _test_copy(acc, cid, modify=False)
     return _test_read(acc, (cid, ))
 
 
@@ -521,7 +539,8 @@ if __name__ == '__main__':
     try:
         prefix = sys.argv[1]
     except IndexError:
-        prefix = 'WIRE:B34:97:CONFIGMODULE:'
+        # 97: is A, 97-1: is B
+        prefix = 'WIRE:B34:97-1:CONFIGMODULE:'
 
     logging.basicConfig()
     logger.setLevel(logging.DEBUG)
