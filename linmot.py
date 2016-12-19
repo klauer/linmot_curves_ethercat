@@ -139,7 +139,8 @@ def unpack_curve_to_bytes(info):
 def parse_curve_info(info):
     info = unpack_curve_to_bytes(info)
     st = CurveInfoStruct()
-    ctypes.memmove(ctypes.addressof(st), info, len(info))
+    ctypes.memmove(ctypes.addressof(st), info,
+                   min((len(info), ctypes.sizeof(st))))
     return st
 
 
@@ -450,11 +451,13 @@ class CurveAccess(object):
         return data
 
 
-def _test_copy(acc, new_curve_id=7):
+def _test_copy(acc, new_curve_id=8):
     from results import curve_1
     info = parse_curve_info(curve_1['info'])
 
-    setpoints = [float(setpoint) * 1e-4 for setpoint in curve_1['data']]
+    setpoints = [float(setpoint) / info.y_scale['position']
+                 for setpoint in curve_1['data']]
+
     acc.write_curve(new_curve_id,
                     '{}(copy-{})'.format(info.name, new_curve_id),
                     info.x_length * 1e-5, setpoints,
@@ -482,8 +485,9 @@ def _test_read(acc, curves):
 def test(prefix):
     acc = CurveAccess(prefix)
 
-    return _test_copy(acc)
-    return _test_read(acc, (10, ))
+    cid = 10
+    _test_copy(acc, cid)
+    return _test_read(acc, (cid, ))
 
 
 if __name__ == '__main__':
