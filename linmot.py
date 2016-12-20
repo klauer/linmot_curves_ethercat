@@ -364,6 +364,8 @@ class CurveAccess(LinmotControl):
 
             # Error - invalid curve id
             Transition(CurveStates.ST_INIT,  CurveStates.ST_ERROR, 0xD401),
+            # Error - size error (?)
+            Transition(CurveStates.ST_INIT,  CurveStates.ST_ERROR, 0xD101),
             ]
 
     def _run(self, initial_state, transition_list, state_info,
@@ -652,6 +654,13 @@ class CurveAccess(LinmotControl):
         logger.debug('Run curve header 0x%x', self.command_header)
         logger.debug('Parameters %s', list(self.command_parameters))
 
+    def invalidate_curve(self, curve_id):
+        sequence_id = self.next_sequence_id()
+        # the manual says 0x0FFF but I think it's wrong
+        self.command_parameters = [0xFFFF0000 | (curve_id & 0xFFFF),
+                                   0, 0, 0, 0]
+        self.command_header = 0x0500 + sequence_id
+
 
 def _test_copy(acc, new_curve_id=8, modify=False):
     from results import curve_1
@@ -685,13 +694,53 @@ def _test_read(acc, curves):
     return data
 
 
+def _test_wirescan(acc, speed=4, max_speed=50, dt=0.01, smoothing=3,
+                   curve_id=10):
+    acc.invalidate_curve(curve_id)
+
+    import wirescan
+    vel_profile = wirescan.build_velocity_profile(speed, max_speed, dt=dt)
+    x_time, pos_profile = wirescan.build_position_profile(dt, vel_profile,
+                                                          smoothing=smoothing)
+
+    import numpy as np
+    vel_profile = -np.array(vel_profile)
+    pos_profile = -pos_profile
+    if True:
+        import matplotlib
+        matplotlib.use('agg')
+        import matplotlib.pyplot as plt
+        print(len(pos_profile), len(vel_profile))
+        plt.plot(x_time, pos_profile)
+        plt.title('speed={} max_speed={} dt={} smoothing={}\nnum_points={}'
+                  ''.format(speed, max_speed, dt, smoothing, len(x_time)))
+
+        ax2 = plt.twinx()
+        ax2.plot(x_time, vel_profile, '--r')
+        plt.savefig('trajectory.png')
+        plt.show()
+
+    # things to note:
+    #   * ensure the profile is inverted
+    #   * ensure x_length is not dt but the full x length
+    acc.write_curve(curve_id, name='Wirescan-{}'.format(curve_id),
+                    x_length=dt * len(pos_profile),
+                    setpoints=pos_profile, modify=False)
+
+    # this works, but for now i prefer to verify it on linmot talk and then
+    # run it...
+    # acc.run_curve(curve_id)
+    return pos_profile
+
+
 def test(prefix):
     acc = CurveAccess(prefix)
 
-    cid = 11
+    cid = 10
     # _test_copy(acc, cid, modify=False)
     # data = _test_read(acc, (cid, ))
-    data = {}
+    # data = {}
+    data = _test_wirescan(acc, curve_id=cid)
     return acc, data
 
 
