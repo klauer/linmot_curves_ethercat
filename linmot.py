@@ -52,8 +52,15 @@ class TimeCurveScaled(PackableStructure):
         st = TimeCurveScaled()
         st.curve_id = curve_id
         st.curve_offset = int(curve_offset * 1e4)
-        st.time_scale = int(time_scale * 100.0)
-        st.amplitude_scale = int(amplitude_scale * 10.0)
+
+        # time scale is normalized here, but linmot expects a percentage
+        # and units are of 0.01 % (so scale = 100 * 100)
+        assert 0 < time_scale <= 2.0
+        st.time_scale = int(time_scale * 10000.0)
+
+        # similarly, amplitude scale is in units of 0.1 %
+        assert -20.0 <= amplitude_scale <= 20.0
+        st.amplitude_scale = int(amplitude_scale * 1000.0)
         return st
 
 
@@ -77,7 +84,9 @@ class TimeCurveTotal(PackableStructure):
         st.curve_id = curve_id
         st.curve_offset = int(curve_offset * 1e4)
         st.time = int(time_sec * 1e5)
-        st.amplitude_scale = int(amplitude_scale * 10.0)
+        # amplitude scale is normalized, but expected to be in units of 0.1 %
+        assert -20.0 <= amplitude_scale <= 20.0
+        st.amplitude_scale = int(amplitude_scale * 1000.0)
         return st
 
 
@@ -615,7 +624,7 @@ class CurveAccess(LinmotControl):
         return (old_count + 1) % 16
 
     def run_curve(self, curve_id, offset=0, time_scale=None,
-                  amplitude_scale=100.0, time_sec=None, wait=True):
+                  amplitude_scale=1.0, time_sec=None, wait=True):
         '''Run a curve
 
         Parameters
@@ -623,15 +632,13 @@ class CurveAccess(LinmotControl):
         offset : float, optional
             Y position offset of curve [mm]
         time_scale : float, optional
-            In (0, 200] scale of time (x) axis
+            In (0, 2.00] scale of time (x) axis
             Cannot be specified with time_sec (below)
-            TODO: normalize
         time_sec : float, optional
             Alternatively, specify the total time of the curve
             Cannot be specified with time_scale
-            TODO: normalize
         amplitude_scale : float, optional
-            In [-2000, 2000] scale of position (y) axis
+            In [-20.0, 20.0] scale of position (y) axis
         wait : bool, optional
             Block until the curve has completed
         '''
@@ -639,7 +646,7 @@ class CurveAccess(LinmotControl):
             raise ValueError('Cannot specify both time_scale and time_sec')
         elif (time_scale is None and time_sec is None) or time_scale:
             if not time_scale:
-                time_scale = 100.0
+                time_scale = 1.0
             cmd = TimeCurveScaled.create(curve_id, offset, time_scale,
                                          amplitude_scale)
         else:
@@ -694,7 +701,7 @@ def _test_read(acc, curves):
     return data
 
 
-def _test_wirescan(acc, speed=4, max_speed=50, dt=0.01, smoothing=3,
+def _test_wirescan(acc, speed=4, max_speed=10, dt=0.01, smoothing=3,
                    curve_id=10):
     acc.invalidate_curve(curve_id)
 
