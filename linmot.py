@@ -17,7 +17,74 @@ State = namedtuple('State', 'control_word data')
 logger = logging.getLogger(__name__)
 
 
-class CurveInfoStruct(ctypes.Structure):
+class PackableStructure(ctypes.LittleEndianStructure):
+    '''Base class which makes it easy to pack any of these structures into the
+    32-bit mc parameter uints or info blocks etc
+    '''
+    def to_uint32s(self, pad=None, pad_value=0):
+        arr = (ctypes.c_uint32 * math.ceil(self._size_ / 4))()
+        ctypes.memmove(arr, ctypes.pointer(self), self._size_)
+
+        if pad and len(arr) < pad:
+            pad_count = pad - len(arr)
+            return list(arr) + [pad_value] * pad_count
+        return arr
+
+    def get_info(self):
+        for field_name, type_ in self._fields_:
+            field_name = field_name.lstrip('_')
+            yield (field_name, type_, getattr(self, field_name))
+
+
+class TimeCurveScaled(PackableStructure):
+    '''Time curve with adjustable offset, time scale, and amplitude scale'''
+    command_header = 0x0440
+    _size_ = 10
+    _pack_ = 1
+    _fields_ = [('curve_id', ctypes.c_uint16),
+                ('curve_offset', ctypes.c_int32),
+                ('time_scale', ctypes.c_uint16),
+                ('amplitude_scale', ctypes.c_int16),
+                ]
+
+    @staticmethod
+    def create(curve_id, curve_offset, time_scale, amplitude_scale):
+        st = TimeCurveScaled()
+        st.curve_id = curve_id
+        st.curve_offset = int(curve_offset * 1e4)
+        st.time_scale = int(time_scale * 100.0)
+        st.amplitude_scale = int(amplitude_scale * 10.0)
+        return st
+
+
+assert ctypes.sizeof(TimeCurveScaled) == TimeCurveScaled._size_
+
+
+class TimeCurveTotal(PackableStructure):
+    '''Time curve with adjustable offset, total time, and amplitude scale'''
+    command_header = 0x0450
+    _size_ = 12
+    _pack_ = 1
+    _fields_ = [('curve_id', ctypes.c_uint16),
+                ('curve_offset', ctypes.c_int32),
+                ('time', ctypes.c_int32),
+                ('amplitude_scale', ctypes.c_int16),
+                ]
+
+    @staticmethod
+    def create(curve_id, curve_offset, time_sec, amplitude_scale):
+        st = TimeCurveTotal()
+        st.curve_id = curve_id
+        st.curve_offset = int(curve_offset * 1e4)
+        st.time = int(time_sec * 1e5)
+        st.amplitude_scale = int(amplitude_scale * 10.0)
+        return st
+
+
+assert ctypes.sizeof(TimeCurveTotal) == TimeCurveTotal._size_
+
+
+class CurveInfoStruct(PackableStructure):
     _size_ = 70  # not part of ctypes.Structure
     _pack_ = 1
     _fields_ = [('data_offset', ctypes.c_uint16),
@@ -72,16 +139,6 @@ class CurveInfoStruct(ctypes.Structure):
         # original calculation:
         # [(info[1] * 4) << 16] | [(info[0] << 16) >> 16]
         return ((self.num_setpoints << 18) | self._size_) & 0xffffffff
-
-    def get_info(self):
-        for field_name, type_ in self._fields_:
-            field_name = field_name.lstrip('_')
-            yield (field_name, type_, getattr(self, field_name))
-
-    def to_uint32s(self):
-        arr = (ctypes.c_uint32 * math.ceil(self._size_ / 4))()
-        ctypes.memmove(arr, ctypes.pointer(self), self._size_)
-        return arr
 
     @staticmethod
     def create(curve_index, name, x_length, num_setpoints, x_type='time',
@@ -549,6 +606,49 @@ class CurveAccess(LinmotControl):
             logger.info('%s - (%x -> %x)', msg, control, status)
             self.write_and_wait(control_word=control, index_out=0, value_out=0,
                                 expected_status=status)
+
+    def next_sequence_id(self):
+        '''Motion commands require sequential sequence identifiers'''
+        old_count = (self.state_var & 0xF)
+        return (old_count + 1) % 16
+
+    def run_curve(self, curve_id, offset=0, time_scale=None,
+                  amplitude_scale=1.0, time_sec=None, wait=True):
+        '''Run a curve
+
+        Parameters
+        ----------
+        offset : float, optional
+            Y position offset of curve [mm]
+        time_scale : float, optional
+            In (0, 200] scale of time (x) axis
+            Cannot be specified with time_sec (below)
+        time_sec : float, optional
+            Alternatively, specify the total time of the curve
+            Cannot be specified with time_scale
+        amplitude_scale : float, optional
+            In [-2000, 2000] scale of position (y) axis
+        wait : bool, optional
+            Block until the curve has completed
+        '''
+        if time_scale is not None and time_sec is not None:
+            raise ValueError('Cannot specify both time_scale and time_sec')
+        elif (time_scale is None and time_sec is None) or time_scale:
+            if not time_scale:
+                time_scale = 1.0
+            cmd = TimeCurveScaled.create(curve_id, offset, time_scale,
+                                         amplitude_scale)
+        else:
+            # specify time
+            cmd = TimeCurveTotal.create(curve_id, offset, time_sec,
+                                        amplitude_scale)
+
+        self.command_parameters = cmd.to_uint32s(pad=5)
+
+        sequence_id = self.next_sequence_id()
+        self.command_header = cmd.command_header + sequence_id
+        logger.debug('Run curve header 0x%x', self.command_header)
+        logger.debug('Parameters %s', list(self.command_parameters))
 
 
 def _test_copy(acc, new_curve_id=8, modify=False):
