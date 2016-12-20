@@ -178,19 +178,41 @@ class LinmotControl(object):
     CMD_STOP_MC = 0x3500
     CMD_START_MC = 0x3600
 
-    def __init__(self, prefix):
-        self._index_in = epics.PV(prefix + 'INDEXIN', auto_monitor=False)
-        self._status_in = epics.PV(prefix + 'STATUSWORD', auto_monitor=False)
-        self._value_in = epics.PV(prefix + 'VALUEIN', auto_monitor=False)
+    def __init__(self, prefix, config_prefix='CONFIGMODULE:',
+                 output_prefix='DO:', input_prefix='DI:'):
+        config_prefix = prefix + config_prefix
+        input_prefix = prefix + input_prefix
+        output_prefix = prefix + output_prefix
+        self._index_in = epics.PV(config_prefix + 'INDEXIN',
+                                  auto_monitor=False)
+        self._status_in = epics.PV(config_prefix + 'STATUSWORD',
+                                   auto_monitor=False)
+        self._value_in = epics.PV(config_prefix + 'VALUEIN',
+                                  auto_monitor=False)
 
-        self._control_word = epics.PV(prefix + 'CONTROLWORD',
+        self._control_word = epics.PV(config_prefix + 'CONTROLWORD',
                                       auto_monitor=False)
-        self._index_out = epics.PV(prefix + 'INDEXOUT', auto_monitor=False)
-        self._value_out = epics.PV(prefix + 'VALUEOUT', auto_monitor=False)
+        self._index_out = epics.PV(config_prefix + 'INDEXOUT',
+                                   auto_monitor=False)
+        self._value_out = epics.PV(config_prefix + 'VALUEOUT',
+                                   auto_monitor=False)
+
+        self._command_pars = [epics.PV('{}MOTIONCOMMANDPAR{}'
+                                       ''.format(output_prefix, i),
+                                       auto_monitor=False)
+                              for i in range(1, 6)]
+        self._command_hdr = epics.PV('{}MOTIONCOMMANDHEADER'
+                                     ''.format(output_prefix),
+                                     auto_monitor=False)
+        self._state_var = epics.PV('{}STATEVAR'.format(input_prefix),
+                                   auto_monitor=False)
 
         self._pvs = [self._index_in, self._status_in, self._value_in,
-                     self._control_word, self._index_out, self._value_out
+                     self._control_word, self._index_out, self._value_out,
+                     self._command_hdr, self._state_var,
                      ]
+
+        self._pvs.extend(self._command_pars)
 
         self._lock = Lock()
 
@@ -234,6 +256,27 @@ class LinmotControl(object):
     def value_out(self, value):
         self._value_out.put(value)
 
+    @property
+    def state_var(self):
+        return self._state_var.get()
+
+    @property
+    def command_parameters(self):
+        return [par.get() for par in self._command_pars]
+
+    @command_parameters.setter
+    def command_parameters(self, values):
+        for par, value in zip(self._command_pars, values):
+            par.put(value)
+
+    @property
+    def command_header(self):
+        return self._command_hdr.get()
+
+    @command_header.setter
+    def command_header(self, value):
+        self._command_hdr.put(value)
+
     def write_and_wait(self, control_word, index_out, value_out,
                        expected_status):
         self.index_out = index_out
@@ -248,8 +291,8 @@ class LinmotControl(object):
 
 
 class CurveAccess(LinmotControl):
-    def __init__(self, prefix):
-        super().__init__(prefix=prefix)
+    def __init__(self, prefix, **kwargs):
+        super().__init__(prefix=prefix, **kwargs)
 
         self.transitions = [
             Transition(CurveStates.ST_INIT,  CurveStates.ST_INFO1, 0x0001),
@@ -544,8 +587,10 @@ def test(prefix):
     acc = CurveAccess(prefix)
 
     cid = 11
-    _test_copy(acc, cid, modify=False)
-    return _test_read(acc, (cid, ))
+    # _test_copy(acc, cid, modify=False)
+    # data = _test_read(acc, (cid, ))
+    data = {}
+    return acc, data
 
 
 if __name__ == '__main__':
@@ -554,11 +599,11 @@ if __name__ == '__main__':
         prefix = sys.argv[1]
     except IndexError:
         # 97: is A, 97-1: is B
-        prefix = 'WIRE:B34:97-1:CONFIGMODULE:'
+        prefix = 'WIRE:B34:97-1:'
 
     logging.basicConfig()
     logger.setLevel(logging.DEBUG)
 
     # use ipython -i linmot.py
     # to get access to these
-    data = test(prefix=prefix)
+    acc, data = test(prefix=prefix)
