@@ -91,6 +91,59 @@ def _test_plot(speed, max_speed, dt, smoothing):
     plt.show()
 
 
+def _plot_bsa_explanation(speed, max_speed, dt, smoothing):
+    import matplotlib
+    matplotlib.use('Qt5Agg')
+    import matplotlib.pyplot as plt
+    from scipy import signal
+
+    vel_profile = build_velocity_profile(speed, max_speed, dt=dt)
+    x_time, pos_profile = build_position_profile(dt, vel_profile,
+                                                 smoothing=smoothing
+                                                 )
+
+    print(len(pos_profile), len(vel_profile))
+    plt.plot(x_time, pos_profile, color='black', label='Wire scanner position')
+
+    skip = 8
+    plt.plot(x_time[::skip], pos_profile[::skip], 'o', color='darkred',
+             label='BSA of Encoder')
+    print(set(np.round(np.diff(x_time[::skip]), decimals=3)))
+
+    plt.xlabel('Time [s]')
+    plt.ylabel('Position [mm]')
+
+    sig_len = int(scan_dist / speed / dt)
+    sig = signal.gaussian(sig_len, sig_len / 10)
+    sig_x = np.arange(0, sig_len * dt, dt)
+
+    det = np.zeros_like(pos_profile)
+
+    for i, (r0, r1) in enumerate(example_range):
+        starti = np.where(pos_profile > r0)[0][0]
+        startt = x_time[starti - 20]
+        scale = np.max(pos_profile) * (((i % 2) + 1) / 2.0)
+        det += np.interp(x_time, startt + sig_x, sig) * scale
+
+    plt.plot(x_time, det, '--b', alpha=0.3, label='Detector [normalized]')
+    plt.plot(x_time[::skip], det[::skip], 'bo', alpha=0.3, label='BSA of Detector')
+    plt.legend(loc='best')
+
+    plt.twinx()
+    plt.ylabel('Normalized detector readout', color='b')
+    plt.yticks(color='b')
+
+    print('\t'.join(('Pulse', 'Time [s]', 'Position [mm]', 'Detector [V]')))
+    for pulse, (t, pos, d) in enumerate(zip(
+            x_time[::skip], pos_profile[::skip], det[::skip])):
+        print('\t'.join((str(pulse + 1), '{:.2f}'.format(t),
+                         '{:.2f}'.format(pos),
+                         '{:.2f}'.format(d / np.max(pos_profile)))))
+
+    plt.show()
+
+
 if __name__ == '__main__':
     speed = get_speed(rep_rate=100)
-    _test_plot(speed, max_speed, dt=0.01, smoothing=3)
+    # _test_plot(speed, max_speed, dt=0.01, smoothing=3)
+    _plot_bsa_explanation(speed, max_speed, dt=0.01, smoothing=3)
