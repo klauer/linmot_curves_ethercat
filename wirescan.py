@@ -38,14 +38,18 @@ def build_velocity_profile(speed, max_speed, dt=0.001, scan_ranges=None):
                  scan_ranges[2][0] - scan_ranges[1][1],
                  scan_dist,
 
+                 # move past the last wire section to give time to turn around
+                 # make it obvious for the diagram this section
+                 scan_dist * 2,
+
                  # return (using negative speed below)
-                 scan_ranges[2][1]
+                 scan_ranges[2][1] + scan_dist * 2,
                  ]
 
     speeds = [max_speed, speed,
               max_speed, speed,
               max_speed, speed,
-              -max_speed
+              max_speed, -max_speed
               ]
 
     vel_profile = [0] * 10

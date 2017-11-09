@@ -307,4 +307,13 @@ curve_5 = {'data': [
 }
 
 
-curves = {1: curve_1, 2: curve_2, 3: curve_3, 5: curve_5}
+curve_10 = {
+    # read from EPICS IOC
+    'info': [
+        0x30046, 0x4017d, 0x65726957, 0x6e616373, 0x30312d, 0x0, 0x0, 0xa0000,
+        0x5d048, 0x5001a, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0
+    ],
+}
+
+curves = {1: curve_1, 2: curve_2, 3: curve_3, 5: curve_5,
+          10: curve_10}

@@ -53,6 +53,7 @@ const uint16_t LM_CI_DATA_OFFSET = 70;
 const uint16_t LM_CI_STRING_LENGTH = 22;
 const int LM_CI_NUM_WIZARD_PARAMS = 7;
 const double LM_CI_XLENGTH_SCALE = 1.0e5;
+const double LM_POSITION_SCALE = 1.0e4;
 
 
 struct __attribute__((packed)) LmCurveInfo {
